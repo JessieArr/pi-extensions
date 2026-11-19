@@ -1,0 +1,19 @@
+{
+  "name": "jessiearr-pi-extensions",
+  "version": "0.1.0",
+  "description": "Custom Pi extensions for per-operation permissions and ice cream prompt customization.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JessieArr/pi-extensions.git"
+  },
+  "files": ["extensions", "README.md", "LICENSE.md"],
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
