@@ -69,11 +69,26 @@ export async function decisionFor(policy: Policy, access: Access, path: string):
 	return allowed ? "allow" : undefined;
 }
 
+function sameRule(a: Rule, b: Rule): boolean {
+	return a.access === b.access && a.effect === b.effect && a.path === b.path && a.scope === b.scope;
+}
+
 export async function saveRule(file: string, rule: Rule): Promise<void> {
 	// Re-read before saving so manual edits are picked up. Atomic replacement prevents
 	// partial JSON reads; separate Pi processes should not edit this file concurrently.
 	const policy = await loadPolicy(file);
-	if (!policy.rules.some((r) => JSON.stringify(r) === JSON.stringify(rule))) policy.rules.push(rule);
+	if (!policy.rules.some((r) => sameRule(r, rule))) policy.rules.push(rule);
+	await writePolicy(file, policy);
+}
+
+export async function removeRule(file: string, rule: Rule): Promise<void> {
+	// Match the selected rule's fields, not its potentially stale list index.
+	const policy = await loadPolicy(file);
+	policy.rules = policy.rules.filter((r) => !sameRule(r, rule));
+	await writePolicy(file, policy);
+}
+
+async function writePolicy(file: string, policy: Policy): Promise<void> {
 	await mkdir(dirname(file), { recursive: true });
 	const temp = `${file}.${randomUUID()}.tmp`;
 	try {

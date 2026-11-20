@@ -64,7 +64,15 @@ Example policy:
 }
 ```
 
-Edit this file manually to remove/revoke rules or add directory-wide denies (`"effect": "deny", "scope": "tree"`). File tools cannot write the policy itself. New policy files are written atomically with owner-only permissions. Approval checks/dialogs/saves are serialized within each Pi process; avoid simultaneously updating rules from multiple Pi processes, since concurrent saves can overwrite each other's changes.
+Use **`/permissions`** to manage saved rules without waiting for a tool approval prompt:
+
+- **List rules** — browse allowed and denied entries, including access type, scope, and full path; select an entry to view or remove it.
+- **Add rule** — choose allow/deny, read/write, exact/tree scope, and a path, then confirm the resolved rule. Relative paths resolve against the current working directory; `~/` paths are supported. Tree rules cover the directory itself and all descendants, including directory-wide denies.
+- **Remove rule** — select an entry and confirm removal. Other matching rules still apply; otherwise future access prompts again.
+
+Escape cancels the current dialog. Changes apply immediately and persist globally. The command uses standard dialogs in both TUI and RPC modes and requires UI support; it does not invoke the LLM. Shell permissions cannot be remembered through this menu.
+
+You can also edit this file manually. File tools cannot write the policy itself. New policy files are written atomically with owner-only permissions. Approval checks/dialogs/saves are serialized within each Pi process; avoid simultaneously updating rules from multiple Pi processes, since concurrent saves can overwrite each other's changes.
 
 Missing policies start with no rules. Malformed/unreadable policies and failed saves deny the operation and report an error. Cancellation and unavailable approval UI also deny by default. In print/JSON mode, saved file rules still apply, but unmatched file operations and all shell commands are denied. RPC clients must support approval dialogs.
 

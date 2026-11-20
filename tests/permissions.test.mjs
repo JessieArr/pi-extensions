@@ -20,7 +20,11 @@ async function extensionHarness(t, agentDir) {
   source = source.replace('"../lib/permission-rules.ts"', JSON.stringify(new URL("../lib/permission-rules.ts", import.meta.url).href));
   const { default: setup } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString("base64")}`);
   const handlers = new Map();
-  setup({ on: (name, handler) => handlers.set(name, handler) });
+  const commands = new Map();
+  setup({
+    on: (name, handler) => handlers.set(name, handler),
+    registerCommand: (name, command) => commands.set(name, command),
+  });
   const prompts = [];
   const errors = [];
   const answers = [];
@@ -32,16 +36,59 @@ async function extensionHarness(t, agentDir) {
         const answer = answers.shift();
         return typeof answer === "number" ? choices[answer] : answer;
       },
+      input: async () => answers.shift(),
+      confirm: async () => answers.shift() === true,
       notify: (message) => errors.push(message),
       setStatus() {},
     },
   };
   return {
     dir, ctx, prompts, answers, errors,
+    manage: () => commands.get("permissions").handler("", ctx),
     call: (toolName, path) => handlers.get("tool_call")({ toolName, input: { path, command: "echo test" } }, ctx),
     shell: () => handlers.get("user_bash")({ command: "echo test" }, ctx),
   };
 }
+
+test("/permissions adds, lists, and removes rules without tool prompts", async (t) => {
+  const h = await extensionHarness(t);
+  h.answers.push("Add rule", "deny", "write", "tree", "project", true, "Done");
+  await h.manage();
+  const file = join(h.dir, "permissions.json");
+  const rule = { effect: "deny", access: "write", scope: "tree", path: join(h.dir, "project") };
+  assert.deepEqual((await loadPolicy(file)).rules, [rule]);
+  const count = h.prompts.length;
+  assert.equal((await h.call("edit", "project/nested/file")).block, true);
+  assert.equal(h.prompts.length, count);
+  h.answers.push("List rules", 0, "Remove rule", true, "Done");
+  await h.manage();
+  assert.deepEqual((await loadPolicy(file)).rules, []);
+  assert.ok(h.prompts.some((p) => p.title.includes("0 allowed, 1 denied")));
+});
+
+test("/permissions cancellation and empty paths do not save rules", async (t) => {
+  const h = await extensionHarness(t);
+  h.answers.push("Add rule", "allow", "read", "exact", "file", false, "Done");
+  await h.manage();
+  h.answers.push("Add rule", "allow", "read", "exact", "   ", "Done");
+  await h.manage();
+  h.answers.push("Add rule", undefined, "Done");
+  await h.manage();
+  assert.deepEqual((await loadPolicy(join(h.dir, "permissions.json"))).rules, []);
+  assert.ok(h.errors.includes("Path must not be empty."));
+});
+
+test("/permissions fails safely on malformed policy and works without UI", async (t) => {
+  const h = await extensionHarness(t);
+  const file = join(h.dir, "permissions.json");
+  await writeFile(file, "broken");
+  await h.manage();
+  assert.match(h.errors[0], /Permission management failed/);
+  assert.equal(await readFile(file, "utf8"), "broken");
+  h.ctx.hasUI = false;
+  await h.manage();
+  assert.equal(h.prompts.length, 0);
+});
 
 test("path boundaries and symlinked new-file parents", async (t) => {
   const dir = await fixture(t);

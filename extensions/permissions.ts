@@ -5,7 +5,7 @@
  */
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { dirname, join } from "node:path";
-import { canonicalPath, decisionFor, loadPolicy, saveRule, type Access } from "../lib/permission-rules.ts";
+import { canonicalPath, decisionFor, loadPolicy, removeRule, saveRule, type Access, type Rule } from "../lib/permission-rules.ts";
 
 export default function permissions(pi: ExtensionAPI) {
 	const policyFile = join(getAgentDir(), "permissions.json");
@@ -22,7 +22,7 @@ export default function permissions(pi: ExtensionAPI) {
 					// Policy changes must be made manually or via explicitly approved shell
 					// commands, never by a file tool using its own remembered approval.
 					if (file.access === "write" && path === await canonicalPath(policyFile, ctx.cwd)) {
-						ctx.ui.notify(`Edit ${policyFile} manually to change permission rules.`, "warning");
+						ctx.ui.notify(`Use /permissions or edit ${policyFile} manually to change permission rules.`, "warning");
 						return false;
 					}
 					const saved = await decisionFor(await loadPolicy(policyFile), file.access, path);
@@ -61,6 +61,71 @@ export default function permissions(pi: ExtensionAPI) {
 		pending = decision.then(() => undefined, () => undefined);
 		return decision;
 	}
+
+	function describe(rule: Rule): string {
+		return `${rule.effect.toUpperCase()} ${rule.access} · ${rule.scope === "tree" ? "directory + descendants" : "exact path"} · ${rule.path}`;
+	}
+
+	async function manage(ctx: ExtensionContext): Promise<void> {
+		while (true) {
+			const { rules } = await loadPolicy(policyFile);
+			const action = await ctx.ui.select(
+				`Permissions (${rules.filter((r) => r.effect === "allow").length} allowed, ${rules.filter((r) => r.effect === "deny").length} denied)\n${policyFile}\nDeny rules win; shell commands always require approval.`,
+				["List rules", "Add rule", "Remove rule", "Done"],
+			);
+			if (!action || action === "Done") return;
+			if (action === "Add rule") {
+				const effect = await ctx.ui.select("Rule effect", ["allow", "deny"]);
+				if (effect !== "allow" && effect !== "deny") continue;
+				const access = await ctx.ui.select("File access (edit/write share write rules)", ["read", "write"]);
+				if (access !== "read" && access !== "write") continue;
+				const scope = await ctx.ui.select("Rule scope", ["exact", "tree"]);
+				if (scope !== "exact" && scope !== "tree") continue;
+				const input = await ctx.ui.input(`Path (${scope === "tree" ? "directory and all descendants" : "exact file or directory"}; relative to ${ctx.cwd})`, "Absolute, relative, or ~/path");
+				if (input === undefined) continue;
+				if (!input.trim()) {
+					ctx.ui.notify("Path must not be empty.", "warning");
+					continue;
+				}
+				const rule: Rule = { effect, access, scope, path: await canonicalPath(input.trim(), ctx.cwd) };
+				if (await ctx.ui.confirm("Add permission rule?", `${describe(rule)}\nDeny rules take precedence. File tools cannot write the policy itself.`)) {
+					await saveRule(policyFile, rule);
+					ctx.ui.notify("Permission rule saved.", "info");
+				}
+				continue;
+			}
+			if (!rules.length) {
+				ctx.ui.notify("No saved permission rules.", "info");
+				continue;
+			}
+			// Numbered labels remain unique even if a manually edited policy has duplicates.
+			const labels = rules.map((rule, index) => `${index + 1}. ${describe(rule)}`);
+			const selected = await ctx.ui.select(action === "Remove rule" ? "Select a rule to remove" : "Saved rules (select to view/remove)", labels);
+			const index = selected === undefined ? -1 : labels.indexOf(selected);
+			if (index < 0) continue;
+			const rule = rules[index];
+			if (action === "List rules" && await ctx.ui.select(describe(rule), ["Back", "Remove rule"]) !== "Remove rule") continue;
+			if (await ctx.ui.confirm("Remove permission rule?", `${describe(rule)}\nOther matching rules still apply; otherwise access will prompt again.`)) {
+				await removeRule(policyFile, rule);
+				ctx.ui.notify("Permission rule removed.", "info");
+			}
+		}
+	}
+
+	pi.registerCommand("permissions", {
+		description: "List, add, or remove saved allow/deny file permission rules",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) return;
+			// Share the approval queue so dialogs and policy updates cannot overlap.
+			const task = pending.then(() => manage(ctx));
+			pending = task.then(() => undefined, () => undefined);
+			try {
+				await task;
+			} catch (error) {
+				ctx.ui.notify(`Permission management failed: ${String(error)}`, "error");
+			}
+		},
+	});
 
 	pi.on("tool_call", async (event, ctx) => {
 		if (!["bash", "powershell", "read", "edit", "write"].includes(event.toolName)) return;
