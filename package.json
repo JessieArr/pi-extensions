@@ -9,7 +9,10 @@
     "type": "git",
     "url": "git+https://github.com/JessieArr/pi-extensions.git"
   },
-  "files": ["extensions", "README.md", "LICENSE.md"],
+  "files": ["extensions", "lib", "README.md", "LICENSE.md"],
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+  },
   "pi": {
     "extensions": ["./extensions"]
   },
